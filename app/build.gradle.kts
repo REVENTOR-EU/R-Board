@@ -17,7 +17,10 @@ android {
         versionName = "1.1.6"
         ndk {
             abiFilters.clear()
-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
+            // arm64-only: every phone R-Board targets runs arm64, and the sherpa-onnx
+            // dictation runtime costs ~100 MB across all four ABIs (arm64 ~27 MB).
+            // The glide-typing library is downloaded per-ABI at runtime, not bundled.
+            abiFilters.add("arm64-v8a")
         }
         proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }

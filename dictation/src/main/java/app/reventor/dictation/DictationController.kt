@@ -25,6 +25,10 @@ import android.os.Looper
  * The tap event arrives for both styles, so [onVoiceKeyTap] must consume the
  * gesture a press/release already handled instead of starting a second recording.
  * All slow work runs on a single executor (which also serializes engine access).
+ *
+ * Recognition runs on the Parakeet TDT 0.6B v3 model via sherpa-onnx; it
+ * auto-detects between its 25 European languages and produces punctuated,
+ * capitalized text natively.
  */
 class DictationController(private val ime: InputMethodService) {
 
@@ -32,10 +36,6 @@ class DictationController(private val ime: InputMethodService) {
         private const val TAG = "ReventorDictation"
         private const val SAMPLE_RATE = 16_000
         private const val MAX_SAMPLES = SAMPLE_RATE * 30
-
-        /** Language codes the dictation engine can recognize (whistle model). */
-        @JvmField
-        val SUPPORTED_LANGUAGES = setOf("en", "de", "fr", "es", "it", "nl")
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -74,18 +74,6 @@ class DictationController(private val ime: InputMethodService) {
         themeLine = line
         themeBackground = background
     }
-
-    /**
-     * Restricts recognition to the given language codes (the keyboard's active languages).
-     * The engine auto-detects; an utterance it hears as an unsupported language gets one
-     * re-decode with the keyboard language. Empty set = unrestricted auto-detect.
-     */
-    fun setAllowedLanguages(codes: Set<String>) {
-        allowedLanguages = codes
-    }
-
-    @Volatile
-    private var allowedLanguages: Set<String> = emptySet()
 
     private fun showWaveform() {
         main.post {
@@ -132,10 +120,10 @@ class DictationController(private val ime: InputMethodService) {
 
     /** Key-down on the layout voice key: start push-to-talk. */
     fun onPressStart() {
-        Log.d(TAG, "onPressStart: engine available=${NeedleEngine.available()}")
+        Log.d(TAG, "onPressStart: engine available=${ParakeetEngine.available()}")
         gestureHandled = false
         pendingRelease = false
-        if (!NeedleEngine.available()) return // no native lib (wrong ABI) → legacy voice IME
+        if (!ParakeetEngine.available()) return // no native lib (wrong ABI) → legacy voice IME
         gestureHandled = true
         lastGestureAt = android.os.SystemClock.uptimeMillis()
         if (!hasMicPermission()) {
@@ -168,7 +156,7 @@ class DictationController(private val ime: InputMethodService) {
         if (gestureHandled || android.os.SystemClock.uptimeMillis() - lastGestureAt < 1500) {
             return true
         }
-        if (!NeedleEngine.available()) return false
+        if (!ParakeetEngine.available()) return false
         if (!hasMicPermission()) {
             launchPermissionActivity()
             return true
@@ -184,20 +172,18 @@ class DictationController(private val ime: InputMethodService) {
     }
 
     private fun prepareAndStartRecording() {
-        val model = ModelManager.modelFile(ime)
-        if (!model.exists()) {
+        if (!ModelManager.parakeetComplete(ime)) {
             if (ModelManager.startDownload(ime)) {
-                toast("Downloading dictation model (17 MB)…")
+                toast("Downloading dictation engine (670 MB)…")
             } else {
-                toast("Dictation model is downloading…")
+                toast("Dictation engine is downloading… ${ModelManager.parakeetProgress.coerceAtLeast(0)}%")
             }
             return
         }
-        if (!NeedleEngine.ensureLoaded(model)) {
-            toast("Dictation failed to load")
-            return
-        }
         startRecorder()
+        // build the recognizer while the user is still speaking — init reads
+        // 652 MB and takes seconds; the same executor then finalizes after it
+        executor.execute { ParakeetEngine.prepare(ModelManager.parakeetModelDir(ime)) }
     }
 
     private fun hasMicPermission(): Boolean =
@@ -266,35 +252,77 @@ class DictationController(private val ime: InputMethodService) {
         sessionActive = false
         hideWaveform()
         executor.execute {
-            val pcm = stopRecorder() ?: return@execute
-            val keyboardLanguage = currentLanguage()
-            // restricted mode: the engine picks between the keyboard's active languages;
-            // anything else it thinks it heard is ignored and re-decoded with the keyboard language
-            var text = if (allowedLanguages.isNotEmpty()) {
-                val (autoText, detected) = NeedleEngine.transcribeAutoDetect(pcm)
-                when {
-                    autoText.isEmpty() -> ""
-                    detected in allowedLanguages -> autoText.trim()
-                    else -> {
-                        Log.d(TAG, "detected language $detected, not in $allowedLanguages — re-decoding with keyboard language $keyboardLanguage")
-                        NeedleEngine.transcribe(pcm, keyboardLanguage ?: allowedLanguages.first(), null).trim()
-                    }
-                }
-            } else {
-                NeedleEngine.transcribe(pcm, keyboardLanguage, null).trim()
+            val raw = stopRecorder() ?: return@execute
+            // front-end: cut the key-press transient, trim silence, normalize level
+            val pcm = cleanAudio(raw) ?: run {
+                main.post { toast("Nothing heard") }
+                return@execute
             }
+            val text = ParakeetEngine.transcribe(pcm).trim()
+            // the recognizer holds ~1.5-2 GB — always freed after one clip
+            ParakeetEngine.releaseAfterUse()
             if (text.isEmpty()) {
                 main.post { toast("Nothing heard") }
                 return@execute
             }
-            // every dictation becomes a clean sentence: end punctuation + space,
-            // so consecutive recordings read as separate sentences
-            if (text.last() !in ".!?…") text += "."
-            text += " "
+            // the model already punctuates and capitalizes; this only guarantees a
+            // uniform sentence ending and a trailing space, so consecutive recordings
+            // read as separate sentences
+            var out = text
+            if (out[0].isLowerCase()) out = out[0].uppercaseChar() + out.substring(1)
+            if (out.last() !in ".!?…") out += "."
+            out += " "
             main.post {
-                ime.currentInputConnection?.commitText(text, 1)
+                ime.currentInputConnection?.commitText(out, 1)
             }
         }
+    }
+
+    /**
+     * Prepares raw mic PCM for the engine: drops the first 150 ms (the key-press /
+     * finger transient would survive energy-based trimming and is often decoded as a
+     * word), trims leading and trailing silence, and raises quiet clips to a sane
+     * level. Returns null when no speech energy remains.
+     */
+    private fun cleanAudio(raw: FloatArray): FloatArray? {
+        val transientEnd = minOf(raw.size, SAMPLE_RATE * 3 / 20) // 150 ms
+        val pcm = if (transientEnd < raw.size) raw.copyOfRange(transientEnd, raw.size) else return null
+        val frame = SAMPLE_RATE / 50 // 20 ms
+        val frames = pcm.size / frame
+        if (frames < 3) return null
+        val rms = FloatArray(frames) { f ->
+            var sum = 0.0
+            val off = f * frame
+            for (i in off until off + frame) {
+                val v = pcm[i].toDouble()
+                sum += v * v
+            }
+            kotlin.math.sqrt(sum / frame).toFloat()
+        }
+        var peakRms = 0f
+        for (r in rms) if (r > peakRms) peakRms = r
+        val threshold = maxOf(0.0025f, peakRms * 0.08f)
+        var first = -1
+        var last = -1
+        for (i in 0 until frames) {
+            if (rms[i] > threshold) {
+                if (first < 0) first = i
+                last = i
+            }
+        }
+        if (first < 0) return null
+        val pad = 6 // 120 ms margin on both sides
+        val from = maxOf(0, (first - pad) * frame)
+        val to = minOf(pcm.size, (last + 1 + pad) * frame)
+        if (to - from < SAMPLE_RATE / 10) return null // < 100 ms of speech
+        val trimmed = pcm.copyOfRange(from, to)
+        var peak = 0f
+        for (v in trimmed) if (kotlin.math.abs(v) > peak) peak = kotlin.math.abs(v)
+        if (peak > 0.0001f && peak < 0.35f) {
+            val gain = minOf(0.85f / peak, 8f) // cap the gain so the noise floor is not amplified into speech
+            for (i in trimmed.indices) trimmed[i] *= gain
+        }
+        return trimmed
     }
 
     private fun stopRecorder(): FloatArray? {
@@ -325,23 +353,6 @@ class DictationController(private val ime: InputMethodService) {
             all
         }
         return if (pcm.isEmpty()) null else pcm
-    }
-
-    /** Keyboard language, or null to let Whistle auto-detect. */
-    private fun currentLanguage(): String? {
-        return try {
-            @Suppress("DEPRECATION")
-            val imm = ime.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            val code = imm.currentInputMethodSubtype?.locale
-                ?: ime.resources.configuration.locales[0].language
-            when (code.lowercase().substringBefore('_')) {
-                "de" -> "de"
-                "en" -> "en"
-                else -> null
-            }
-        } catch (_: Throwable) {
-            null
-        }
     }
 
     private fun toast(message: String) {

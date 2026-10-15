@@ -68,12 +68,6 @@ fun MainSettingsScreen(
                     onClick = onClickLanguage,
                     icon = R.drawable.ic_settings_languages
                 ) { NextScreenIcon() }
-                SwitchPreference(
-                    name = stringResource(R.string.dictation_restrict_languages),
-                    key = Settings.PREF_DICTATION_RESTRICT_LANGUAGES,
-                    default = Defaults.PREF_DICTATION_RESTRICT_LANGUAGES,
-                    description = stringResource(R.string.dictation_restrict_languages_summary)
-                )
                 Preference(
                     name = stringResource(R.string.settings_screen_preferences),
                     onClick = onClickPreferences,

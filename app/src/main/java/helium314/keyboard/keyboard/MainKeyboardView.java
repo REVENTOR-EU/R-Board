@@ -743,23 +743,13 @@ public final class MainKeyboardView extends KeyboardView implements DrawingProxy
     // Layout language name on spacebar.
     private String layoutLanguageOnSpacebar(final Paint paint,
             final RichInputMethodSubtype subtype, final int width) {
-        // Choose appropriate language name to fit into the width.
+        // Only the ACTIVE layout's language — mixed-language input was removed,
+        // so the secondary-locales list is deliberately ignored here.
 
-        final List<Locale> secondaryLocales = Settings.getValues().mSecondaryLocales;
-        // avoid showing same language twice
-        final List<Locale> secondaryLocalesToUse = withoutDuplicateLanguages(secondaryLocales, subtype.getLocale().getLanguage());
-        if (!secondaryLocalesToUse.isEmpty()) {
-            final Locale displayLocale = ConfigurationCompatKt.locale(getResources().getConfiguration());
-            // short language codes with slash separators, e.g. "DE / EN"
-            StringBuilder sb = new StringBuilder(subtype.getLocale().getLanguage().toUpperCase(displayLocale));
-            for (Locale locale : secondaryLocalesToUse) {
-                sb.append(" / ");
-                sb.append(locale.getLanguage().toUpperCase(displayLocale));
-            }
-            final String codeList = sb.toString();
-            if (fitsTextIntoWidth(width, codeList, paint)) {
-                return codeList;
-            }
+        final Locale displayLocale = ConfigurationCompatKt.locale(getResources().getConfiguration());
+        final String code = subtype.getLocale().getLanguage().toUpperCase(displayLocale);
+        if (fitsTextIntoWidth(width, code, paint)) {
+            return code;
         }
 
         if (mLanguageOnSpacebarFormatType == LanguageOnSpacebarUtils.FORMAT_TYPE_FULL_LOCALE) {

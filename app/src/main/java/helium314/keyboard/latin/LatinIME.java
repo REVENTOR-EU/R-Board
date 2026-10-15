@@ -1422,23 +1422,12 @@ public class LatinIME extends InputMethodService implements
         return mDictationController;
     }
 
-    /** hands the current theme colors and the letter-row boundary to the dictation overlay */
+    /** hands the current theme colors to the dictation overlay */
     public void passDictationColors() {
         final Colors colors = mSettings.getCurrent().mColors;
         getDictation().setColors(
                 colors.get(ColorType.KEY_TEXT), // the waveform uses the letter color
                 colors.get(ColorType.STRIP_BACKGROUND)); // covers the suggestions area while recording
-        // dictation only speaks the keyboard's active languages — everything else is ignored
-        final java.util.HashSet<String> languages = new java.util.HashSet<>();
-        if (DeviceProtectedUtils.getSharedPreferences(this)
-                .getBoolean(Settings.PREF_DICTATION_RESTRICT_LANGUAGES, Defaults.PREF_DICTATION_RESTRICT_LANGUAGES)) {
-            for (final InputMethodSubtype subtype : SubtypeSettings.INSTANCE.getEnabledSubtypes(true)) {
-                final String code = subtype.getLocale().toLowerCase(java.util.Locale.ROOT).split("_")[0];
-                if (DictationController.SUPPORTED_LANGUAGES.contains(code))
-                    languages.add(code);
-            }
-        }
-        getDictation().setAllowedLanguages(languages);
     }
 
     public void onEvent(@NonNull final Event event) {

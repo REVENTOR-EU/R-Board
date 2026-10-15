@@ -12,3 +12,8 @@
 # after upgrading to gradle 8, stack traces contain "unknown source"
 -keepattributes SourceFile,LineNumberTable
 -dontobfuscate
+
+# sherpa-onnx JNI: the native lib looks up config/result classes and constructors
+# reflectively by name — R8 must not rename or merge them (crash: NoSuchMethodError
+# on OfflineRecognizerResult.<init> from Java_com_k2fsa_sherpa_onnx_OfflineRecognizer_getResult)
+-keep class com.k2fsa.sherpa.onnx.** { *; }

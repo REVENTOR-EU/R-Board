@@ -183,14 +183,13 @@ object SubtypeUtilsAdditional {
     }
 
     /**
-     * Runs once: enables multilingual typing between all enabled latin-script languages,
-     * so the keyboard suggests and autocorrects in all of them at the same time.
-     * Skipped when any subtype already has secondary locales configured.
+     * Enables multilingual typing between all enabled latin-script languages, so the
+     * keyboard suggests and autocorrects in all of them at the same time. Self-healing:
+     * runs on every keyboard start and re-applies when no subtype has secondary locales
+     * (e.g. after they were stripped). Skipped when any subtype already has secondary
+     * locales configured — that counts as manual user configuration.
      */
     fun ensureDefaultMultilingualTyping(context: Context) {
-        val prefs = context.prefs()
-        if (prefs.getBoolean(Settings.PREF_MULTILINGUAL_AUTO_APPLIED, false)) return
-        prefs.edit { putBoolean(Settings.PREF_MULTILINGUAL_AUTO_APPLIED, true) }
         val latinSubtypes = SubtypeSettings.getEnabledSubtypes(true)
             .filter { it.locale().script() == ScriptUtils.SCRIPT_LATIN }
         if (latinSubtypes.size < 2) return
