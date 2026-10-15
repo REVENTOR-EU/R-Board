@@ -7,10 +7,13 @@ with its own feature set on top:
 - **High-accuracy offline voice dictation** — push-to-talk with NVIDIA's
   [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
   speech model, run on-device via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx).
-  Recognizes 25 European languages with automatic language detection, and
-  produces punctuated, capitalized text natively. The model (~670 MB) is
-  downloaded once on first use; recognition then works fully offline.
-  No cloud, no keyboard network access.
+  Recognizes 25 European languages with automatic language detection —
+  Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish,
+  French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese,
+  Polish, Portuguese, Romanian, Slovak, Slovenian, Spanish, Swedish, Russian
+  and Ukrainian — and produces punctuated, capitalized text natively. The
+  model (~670 MB) is downloaded once on first use; recognition then works
+  fully offline. No cloud, no keyboard network access.
 - **Clipboard sync with your PC** — text clipboard is mirrored over Bluetooth
   Classic (RFCOMM) between the phone and Windows. No cloud, no WLAN needed;
   the Windows companion **R-Board Clipboard Sync** comes with a built-in
