@@ -13,8 +13,8 @@ android {
         applicationId = "app.reventor.keyboard"
         minSdk = 21
         targetSdk = 37
-        versionCode = 10106
-        versionName = "1.1.6"
+        versionCode = 10200
+        versionName = "1.2.0"
         ndk {
             abiFilters.clear()
             // arm64-only: every phone R-Board targets runs arm64, and the sherpa-onnx
