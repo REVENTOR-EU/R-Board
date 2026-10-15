@@ -608,12 +608,18 @@ unsafe fn clear_children(hwnd: HWND) {
 fn tick(hwnd: HWND, wiz: &mut Wizard) {
     let mut sh = wiz.sh.lock().unwrap();
 
-    // refresh the status label on every tick
+    // refresh the status label on every tick — WITHOUT holding the lock across
+    // SetWindowTextW: the static repaints synchronously, which sends
+    // WM_CTLCOLORSTATIC back to this window, and that handler locks the same
+    // mutex (self-deadlock froze the wizard at the first tick)
+    let status_text = sh.status.clone();
+    drop(sh);
     unsafe {
         if let Some(status) = dlg(hwnd, IDC_STATUS) {
-            let _ = SetWindowTextW(status, &HSTRING::from(sh.status.clone()));
+            let _ = SetWindowTextW(status, &HSTRING::from(status_text));
         }
     }
+    sh = wiz.sh.lock().unwrap();
     if sh.quit {
         return;
     }
@@ -642,11 +648,13 @@ fn tick(hwnd: HWND, wiz: &mut Wizard) {
         Page::Service => {
             if sh.service_hint && !sh.service_hint_shown {
                 sh.service_hint_shown = true;
+                drop(sh); // SetWindowTextW must not run under the lock (see tick)
                 unsafe {
                     if let Some(body) = dlg(hwnd, IDC_BODY) {
                         let _ = SetWindowTextW(body, &HSTRING::from(SERVICE_INSTRUCTIONS));
                     }
                 }
+                sh = wiz.sh.lock().unwrap();
             }
             if sh.service_ok && !sh.sync_started {
                 let (addr, _) = sh.found.clone().expect("service ok implies found");
