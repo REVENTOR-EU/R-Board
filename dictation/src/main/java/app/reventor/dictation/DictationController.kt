@@ -35,7 +35,13 @@ class DictationController(private val ime: InputMethodService) {
     companion object {
         private const val TAG = "ReventorDictation"
         private const val SAMPLE_RATE = 16_000
-        private const val MAX_SAMPLES = SAMPLE_RATE * 30
+
+        // Not a model limit — Parakeet decodes arbitrarily long clips (its own docs
+        // cover up to 24 minutes per pass). This is only a safety net for toggle mode
+        // (toolbar mic): if the user walks away without a second tap, recording is
+        // finalized after 10 minutes instead of running forever. Push-to-talk always
+        // ends on key release and never reaches it.
+        private const val MAX_SAMPLES = SAMPLE_RATE * 60 * 10
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -207,10 +213,13 @@ class DictationController(private val ime: InputMethodService) {
             )
         } catch (t: Throwable) {
             Log.w(TAG, "AudioRecord unavailable", t)
+            toast("Microphone unavailable — another app may be using it")
             return
         }
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
+            Log.w(TAG, "AudioRecord not initialized — microphone held by another app?")
             rec.release()
+            toast("Microphone unavailable — another app may be using it")
             return
         }
         synchronized(chunks) {
