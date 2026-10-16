@@ -13,8 +13,8 @@ import java.io.File
  *
  * RAM budget: the loaded recognizer holds ~1.5-2 GB. It stays loaded so repeated
  * dictations skip the ~2 s model load, and is released when the system runs low on
- * memory (forwarded from LatinIME's onTrimMemory) or after [IDLE_RELEASE_MS] without
- * a dictation.
+ * memory (forwarded from LatinIME's onTrimMemory) — the 5-minute idle timer only
+ * arms on memory-constrained devices.
  *
  * The model auto-detects between its 25 European languages; no language is forced
  * (consistent with the Whistle path, where the language hint proved to be weak
@@ -23,9 +23,6 @@ import java.io.File
 object ParakeetEngine {
     private const val TAG = "ReventorDictation"
     private val lock = Any()
-
-    /** Free the ~1.5-2 GB after this much idle time without a dictation. */
-    private const val IDLE_RELEASE_MS = 5 * 60 * 1000L
 
     private var recognizer: OfflineRecognizer? = null
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -76,11 +73,14 @@ object ParakeetEngine {
         if (recognizer != null) handler.removeCallbacks(idleRelease)
     }
 
-    /** Schedules freeing the recognizer if nothing happens for [IDLE_RELEASE_MS]. */
-    fun scheduleIdleRelease(): Unit = synchronized(lock) {
-        if (recognizer != null) {
-            handler.removeCallbacks(idleRelease)
-            handler.postDelayed(idleRelease, IDLE_RELEASE_MS)
+    /**
+     * Arms (or disarms) the idle release. A delayMs of 0 means "keep the model
+     * loaded indefinitely" — memory-pressure trim still frees it.
+     */
+    fun scheduleIdleRelease(delayMs: Long): Unit = synchronized(lock) {
+        handler.removeCallbacks(idleRelease)
+        if (recognizer != null && delayMs > 0) {
+            handler.postDelayed(idleRelease, delayMs)
         }
     }
 

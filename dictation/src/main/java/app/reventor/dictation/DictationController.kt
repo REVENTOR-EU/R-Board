@@ -42,6 +42,9 @@ class DictationController(private val ime: InputMethodService) {
         // finalized after 10 minutes instead of running forever. Push-to-talk always
         // ends on key release and never reaches it.
         private const val MAX_SAMPLES = SAMPLE_RATE * 60 * 10
+
+        /** Idle time before the model is freed on memory-constrained devices. */
+        private const val IDLE_RELEASE_MS = 5 * 60 * 1000L
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -182,6 +185,22 @@ class DictationController(private val ime: InputMethodService) {
         executor.execute { ParakeetEngine.releaseAfterUse() }
     }
 
+    /**
+     * Decides whether the loaded model may stay in RAM indefinitely. On phones with
+     * plenty of free memory it stays (nothing forces it out except the system's own
+     * trim signals); low-memory devices get the idle-release safety net.
+     */
+    private fun deviceIsMemoryConstrained(): Boolean {
+        return try {
+            val am = ime.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val info = android.app.ActivityManager.MemoryInfo()
+            am.getMemoryInfo(info)
+            info.availMem < 3L * 1024 * 1024 * 1024 // < 3 GB available: keep a safety net
+        } catch (_: Throwable) {
+            true // cannot tell — keep the safety net
+        }
+    }
+
     private fun prepareAndStartRecording() {
         if (!ModelManager.parakeetComplete(ime)) {
             if (ModelManager.startDownload(ime)) {
@@ -275,8 +294,9 @@ class DictationController(private val ime: InputMethodService) {
             }
             val text = ParakeetEngine.transcribe(pcm).trim()
             // keep the recognizer loaded for fast follow-up dictations; it is freed
-            // on memory pressure (onTrimMemory) or after 5 idle minutes
-            ParakeetEngine.scheduleIdleRelease()
+            // on memory pressure (onTrimMemory). The 5-minute idle release only arms
+            // on memory-constrained devices — with RAM to spare it simply stays.
+            ParakeetEngine.scheduleIdleRelease(if (deviceIsMemoryConstrained()) IDLE_RELEASE_MS else 0L)
             if (text.isEmpty()) {
                 main.post { toast("Nothing heard") }
                 return@execute
