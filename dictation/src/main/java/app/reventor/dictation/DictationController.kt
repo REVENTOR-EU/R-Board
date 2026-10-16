@@ -177,6 +177,11 @@ class DictationController(private val ime: InputMethodService) {
         return true
     }
 
+    /** Called from LatinIME.onTrimMemory: free the loaded model when the system needs RAM. */
+    fun releaseEngineOnMemoryPressure() {
+        executor.execute { ParakeetEngine.releaseAfterUse() }
+    }
+
     private fun prepareAndStartRecording() {
         if (!ModelManager.parakeetComplete(ime)) {
             if (ModelManager.startDownload(ime)) {
@@ -187,8 +192,9 @@ class DictationController(private val ime: InputMethodService) {
             return
         }
         startRecorder()
-        // build the recognizer while the user is still speaking — init reads
-        // 652 MB and takes seconds; the same executor then finalizes after it
+        ParakeetEngine.keepAlive() // an idle release scheduled earlier must not kill this session
+        // build the recognizer while the user is still speaking — the first init
+        // reads 652 MB and takes seconds; later sessions find it already loaded
         executor.execute { ParakeetEngine.prepare(ModelManager.parakeetModelDir(ime)) }
     }
 
@@ -268,8 +274,9 @@ class DictationController(private val ime: InputMethodService) {
                 return@execute
             }
             val text = ParakeetEngine.transcribe(pcm).trim()
-            // the recognizer holds ~1.5-2 GB — always freed after one clip
-            ParakeetEngine.releaseAfterUse()
+            // keep the recognizer loaded for fast follow-up dictations; it is freed
+            // on memory pressure (onTrimMemory) or after 5 idle minutes
+            ParakeetEngine.scheduleIdleRelease()
             if (text.isEmpty()) {
                 main.post { toast("Nothing heard") }
                 return@execute

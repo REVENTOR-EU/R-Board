@@ -11,10 +11,10 @@ import java.io.File
  * Optional high-accuracy engine: NVIDIA Parakeet TDT 0.6B v3 (int8, CC-BY-4.0) run by
  * sherpa-onnx. Model files (~670 MB) are downloaded on demand (see [ModelManager]).
  *
- * RAM budget: the loaded recognizer holds ~1.5-2 GB — far too much for an IME process
- * to keep around. So the recognizer is BUILT while the user is still holding the voice
- * key (init reads the whole 652 MB encoder, seconds), the clip is decoded on release,
- * and the recognizer is destroyed right after ([releaseAfterUse]).
+ * RAM budget: the loaded recognizer holds ~1.5-2 GB. It stays loaded so repeated
+ * dictations skip the ~2 s model load, and is released when the system runs low on
+ * memory (forwarded from LatinIME's onTrimMemory) or after [IDLE_RELEASE_MS] without
+ * a dictation.
  *
  * The model auto-detects between its 25 European languages; no language is forced
  * (consistent with the Whistle path, where the language hint proved to be weak
@@ -24,7 +24,12 @@ object ParakeetEngine {
     private const val TAG = "ReventorDictation"
     private val lock = Any()
 
+    /** Free the ~1.5-2 GB after this much idle time without a dictation. */
+    private const val IDLE_RELEASE_MS = 5 * 60 * 1000L
+
     private var recognizer: OfflineRecognizer? = null
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val idleRelease = Runnable { releaseAfterUse() }
 
     /** False when the sherpa-onnx JNI libs are missing (non-arm64 build). */
     fun available(): Boolean = try {
@@ -66,6 +71,19 @@ object ParakeetEngine {
         }
     }
 
+    /** Keeps the loaded recognizer alive: cancels any pending idle release. */
+    fun keepAlive(): Unit = synchronized(lock) {
+        if (recognizer != null) handler.removeCallbacks(idleRelease)
+    }
+
+    /** Schedules freeing the recognizer if nothing happens for [IDLE_RELEASE_MS]. */
+    fun scheduleIdleRelease(): Unit = synchronized(lock) {
+        if (recognizer != null) {
+            handler.removeCallbacks(idleRelease)
+            handler.postDelayed(idleRelease, IDLE_RELEASE_MS)
+        }
+    }
+
     /** Decodes one clip (16 kHz mono); empty string on failure or unloaded engine. */
     fun transcribe(pcm: FloatArray): String = synchronized(lock) {
         val rec = recognizer ?: return ""
@@ -83,11 +101,13 @@ object ParakeetEngine {
     }
 
     /** Frees the ~1.5-2 GB the recognizer holds; the next prepare() rebuilds it. */
-    fun releaseAfterUse() = synchronized(lock) {
+    fun releaseAfterUse(): Unit = synchronized(lock) {
+        handler.removeCallbacks(idleRelease)
         val rec = recognizer
         recognizer = null
         try {
             rec?.release()
+            if (rec != null) Log.i(TAG, "parakeet recognizer released")
         } catch (t: Throwable) {
             Log.w(TAG, "parakeet release failed", t)
         }

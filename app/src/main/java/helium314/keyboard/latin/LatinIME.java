@@ -1879,6 +1879,9 @@ public class LatinIME extends InputMethodService implements
             case TRIM_MEMORY_RUNNING_LOW, TRIM_MEMORY_RUNNING_CRITICAL, TRIM_MEMORY_COMPLETE -> {
                 KeyboardLayoutSet.Companion.onSystemLocaleChanged(); // clears caches, nothing else
                 mKeyboardSwitcher.trimMemory();
+                // the loaded dictation model holds ~1.5-2 GB — let it go when the
+                // system is under pressure; the next dictation reloads it
+                getDictation().releaseEngineOnMemoryPressure();
             }
             // deallocateMemory always called on hiding, and should not be called when showing
         }
